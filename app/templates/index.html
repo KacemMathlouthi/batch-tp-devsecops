@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tp-devsecops {{ version }}</title>
+  <style>
+    body { margin: 0; background: #0a0a0a; color: #ededed; font: 16px/1.6 ui-sans-serif, system-ui, sans-serif; }
+    main { max-width: 640px; margin: 64px auto; padding: 0 16px; }
+    h1 { font-weight: 600; letter-spacing: -0.02em; }
+    .meta { color: #a1a1a1; font: 13px ui-monospace, monospace; }
+    li { border-bottom: 1px solid #1f1f1f; padding: 8px 0; list-style: none; }
+    ul { padding: 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Notes</h1>
+    <p class="meta">version {{ version }} · pod {{ pod }}</p>
+    <ul>
+      {% for n in notes %}
+      <li>#{{ n.id }} · {{ n.title }} <span class="meta">({{ n.owner }})</span></li>
+      {% endfor %}
+    </ul>
+  </main>
+</body>
+</html>
