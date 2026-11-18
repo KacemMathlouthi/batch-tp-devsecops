@@ -4,3 +4,4 @@ __pycache__/
 *.pdf
 !tp*/compte-rendu/*.pdf
 reports/tmp/
+app/data/

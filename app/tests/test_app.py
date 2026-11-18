@@ -1,14 +1,15 @@
-import os
+import importlib
 
 import pytest
 from fastapi.testclient import TestClient
+
+ADMIN_PASSWORD = "test-only-password"
 
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("DB_PATH", str(tmp_path / "notes.db"))
-    import importlib
-
+    monkeypatch.setenv("ADMIN_PASSWORD", ADMIN_PASSWORD)
     import main
 
     importlib.reload(main)
@@ -32,10 +33,39 @@ def test_search_finds_note(client):
 
 
 def test_login_ok_and_ko(client):
-    password = os.environ.get("ADMIN_PASSWORD", "admin123")
-    assert client.post("/login", data={"username": "admin", "password": password}).json()["ok"] is True
+    assert client.post("/login", data={"username": "admin", "password": ADMIN_PASSWORD}).json()["ok"] is True
     assert client.post("/login", data={"username": "admin", "password": "nope"}).json()["ok"] is False
 
 
 def test_hello(client):
     assert "Bonjour Kacem" in client.get("/hello", params={"name": "Kacem"}).text
+
+
+# ── Regression tests for the TP1 fixes ──────────────────────
+
+
+def test_search_sql_injection_is_inert(client):
+    payload = "%' UNION SELECT id, username, password, 'leak' FROM users --"
+    assert client.get("/search", params={"q": payload}).json() == []
+
+
+def test_hello_escapes_html(client):
+    body = client.get("/hello", params={"name": "<script>alert(1)</script>"}).text
+    assert "<script>" not in body
+    assert "&lt;script&gt;" in body
+
+
+def test_ping_rejects_shell_metacharacters(client):
+    assert client.get("/ping", params={"host": "127.0.0.1;id"}).status_code == 400
+
+
+def test_import_refuses_python_objects(client):
+    payload = '!!python/object/apply:os.system ["id"]'
+    assert client.post("/import", data={"payload": payload}).status_code == 400
+
+
+def test_passwords_are_salted():
+    import main
+
+    assert main.hash_password("x") != main.hash_password("x")
+    assert main.verify_password("x", main.hash_password("x"))
