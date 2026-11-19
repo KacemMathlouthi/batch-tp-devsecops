@@ -85,6 +85,14 @@ def search(q: str = ""):
     return [dict(r) for r in rows]
 
 
+@app.get("/notes/by-owner", response_class=HTMLResponse)
+def notes_by_owner(owner: str = "admin"):
+    with db() as conn:
+        rows = conn.execute("SELECT id, title FROM notes WHERE owner = ?", (owner,)).fetchall()
+    items = "".join(f"<li>{html.escape(r['title'])}</li>" for r in rows)
+    return f"<h2>Notes de {html.escape(owner)}</h2><ul>{items}</ul>"
+
+
 @app.get("/hello", response_class=HTMLResponse)
 def hello(name: str = "visiteur"):
     return f"<h1>Bonjour {html.escape(name)}</h1>"

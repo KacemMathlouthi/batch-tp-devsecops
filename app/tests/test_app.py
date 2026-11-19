@@ -41,6 +41,10 @@ def test_hello(client):
     assert "Bonjour Kacem" in client.get("/hello", params={"name": "Kacem"}).text
 
 
+def test_notes_by_owner(client):
+    assert "Bienvenue" in client.get("/notes/by-owner", params={"owner": "admin"}).text
+
+
 # ── Regression tests for the TP1 fixes ──────────────────────
 
 
@@ -69,3 +73,13 @@ def test_passwords_are_salted():
 
     assert main.hash_password("x") != main.hash_password("x")
     assert main.verify_password("x", main.hash_password("x"))
+
+
+def test_notes_by_owner_injection_is_inert(client):
+    body = client.get("/notes/by-owner", params={"owner": "' OR '1'='1"}).text
+    assert "Bienvenue" not in body
+
+
+def test_notes_by_owner_escapes_html(client):
+    body = client.get("/notes/by-owner", params={"owner": "<script>alert(1)</script>"}).text
+    assert "<script>" not in body
