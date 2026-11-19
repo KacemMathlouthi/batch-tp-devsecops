@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 330" width="880" height="330">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8f8f8f"/>
+    </marker>
+    <style>
+      .box   { fill: #ffffff; stroke: #d4d4d4; stroke-width: 1; }
+      .soft  { fill: #fafafa; stroke: #ebebeb; stroke-width: 1; }
+      .pub   { fill: #ffffff; stroke: #171717; stroke-width: 1.2; }
+      .edge  { fill: none; stroke: #8f8f8f; stroke-width: 1.2; }
+      .title { font-family: Geist; font-size: 14px; font-weight: 600; fill: #171717; }
+      .sub   { font-family: Geist; font-size: 11px; fill: #4d4d4d; }
+      .mono  { font-family: 'Geist Mono'; font-size: 11px; fill: #4d4d4d; }
+      .note  { font-family: Geist; font-size: 11px; fill: #8f8f8f; }
+      .lane  { font-family: Geist; font-size: 10px; fill: #8f8f8f; letter-spacing: 0.08em; }
+    </style>
+  </defs>
+
+  <!-- column labels -->
+  <text class="lane" x="20"  y="22">DÉCLENCHEUR</text>
+  <text class="lane" x="200" y="22">CONTRÔLES</text>
+  <text class="lane" x="430" y="22">ATTAQUE</text>
+  <text class="lane" x="660" y="22">LIVRAISON</text>
+
+  <!-- trigger -->
+  <rect class="soft" x="20" y="140" width="140" height="56" rx="8"/>
+  <text class="title" x="34" y="164">push</text>
+  <text class="sub"   x="34" y="182">pull request → main</text>
+
+  <!-- build and test -->
+  <rect class="box" x="200" y="40" width="190" height="62" rx="8"/>
+  <circle cx="218" cy="62" r="4" fill="#16a34a"/>
+  <text class="title" x="230" y="67">build and test</text>
+  <text class="mono"  x="218" y="88">uv sync · pytest · build</text>
+
+  <!-- sast -->
+  <rect class="box" x="200" y="137" width="190" height="62" rx="8"/>
+  <circle cx="218" cy="159" r="4" fill="#dc2626"/>
+  <text class="title" x="230" y="164">sast (bandit)</text>
+  <text class="sub"   x="218" y="185">bloque si sévérité High</text>
+
+  <!-- sca -->
+  <rect class="box" x="200" y="234" width="190" height="62" rx="8"/>
+  <circle cx="218" cy="256" r="4" fill="#dc2626"/>
+  <text class="title" x="230" y="261">sca (snyk)</text>
+  <text class="sub"   x="218" y="282">bloque si High ou Critical</text>
+
+  <!-- dast -->
+  <rect class="box" x="430" y="40" width="190" height="62" rx="8"/>
+  <circle cx="448" cy="62" r="4" fill="#dc2626"/>
+  <text class="title" x="460" y="67">dast (zap)</text>
+  <text class="sub"   x="448" y="88">env. éphémère · bloque si High</text>
+
+  <!-- publish -->
+  <rect class="pub" x="660" y="137" width="200" height="62" rx="8"/>
+  <text class="title" x="676" y="164">publish image</text>
+  <text class="mono"  x="676" y="185">ghcr.io · tag = SHA</text>
+  <text class="note"  x="660" y="222">main uniquement,</text>
+  <text class="note"  x="660" y="238">si les 4 contrôles passent</text>
+
+  <!-- trigger fan-out -->
+  <path class="edge" d="M 160 168 C 180 168, 180 71, 198 71" marker-end="url(#arrow)"/>
+  <path class="edge" d="M 160 168 L 198 168" marker-end="url(#arrow)"/>
+  <path class="edge" d="M 160 168 C 180 168, 180 265, 198 265" marker-end="url(#arrow)"/>
+
+  <!-- build -> dast -->
+  <path class="edge" d="M 390 71 L 428 71" marker-end="url(#arrow)"/>
+  <text class="note" x="396" y="64">needs</text>
+
+  <!-- gates -> publish -->
+  <path class="edge" d="M 620 71 C 640 71, 640 160, 658 160" marker-end="url(#arrow)"/>
+  <path class="edge" d="M 390 168 L 658 168" marker-end="url(#arrow)"/>
+  <path class="edge" d="M 390 265 C 640 265, 640 176, 658 176" marker-end="url(#arrow)"/>
+</svg>

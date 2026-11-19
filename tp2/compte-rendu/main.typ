@@ -99,22 +99,10 @@ jobs:
 
 == Architecture du pipeline
 
-```
-          push / pull request
-                  │
-     ┌────────────┼──────────────┐
-     ▼            ▼              ▼
- build and     sast           sca
-   test       (bandit)       (snyk)
-     │            │              │
-     ▼            │              │
- dast (zap)       │              │
-     │            │              │
-     └────────────┴──────┬───────┘
-                         ▼
-                  publish image        ← main uniquement,
-                  (ghcr.io)              si les 4 jobs passent
-```
+#figure(
+  image("diagrams/pipeline.svg", width: 100%),
+  caption: [Les jobs du workflow #cmd[ci] ; point rouge : porte de sécurité],
+)
 
 - Quatre jobs indépendants, un par contrôle : un échec désigne immédiatement le contrôle en cause.
 - SAST et SCA tournent en parallèle du build : ils n'ont besoin que du code source.
