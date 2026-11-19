@@ -139,11 +139,31 @@ jobs:
         if: always()
         run: docker rm -f target && docker network rm dast
 
-  # ── 5. Publish: only on main, only if every gate passed ─────────────
+  # ── 5. Image scan: Trivy, blocks on High or Critical (TP3) ──────────
+  image-scan:
+    name: image scan (trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: build image
+        run: docker build -t tp-devsecops:${{ github.sha }} app
+
+      - name: dockerfile misconfigurations (fails on High or Critical)
+        run: |
+          docker run --rm -v "$PWD/app":/src aquasec/trivy:0.76.2 \
+            config --exit-code 1 --severity HIGH,CRITICAL /src/Dockerfile
+
+      - name: image vulnerabilities (fails on High or Critical)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.76.2 \
+            image --exit-code 1 --severity HIGH,CRITICAL tp-devsecops:${{ github.sha }}
+
+  # ── 6. Publish: only on main, only if every gate passed ─────────────
   publish:
     name: publish image
     runs-on: ubuntu-latest
-    needs: [test, sast, sca, dast]
+    needs: [test, sast, sca, dast, image-scan]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
