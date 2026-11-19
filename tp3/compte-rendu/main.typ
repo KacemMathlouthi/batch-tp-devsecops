@@ -314,3 +314,158 @@ metadata:
   - L'application lit ses secrets au démarrage et fonctionne avec eux.
   - Pod non-root, en lecture seule, sans capacité ni jeton d'API ; la politique du namespace rend ces règles obligatoires.
 ])
+
+// ═══════════════════════════════════════════
+//  ÉTAPE 3, FALCO
+// ═══════════════════════════════════════════
+= Étape 3 : surveillance au runtime avec Falco
+
+== Principe
+
+- Les étapes précédentes réduisent ce qu'un attaquant peut faire ; Falco détecte ce qu'il fait réellement, une fois à l'intérieur.
+- Falco observe les appels système de toutes les machines du cluster (sonde eBPF dans le noyau), les enrichit avec le contexte Kubernetes (pod, namespace, image) et les confronte à des règles.
+- Déployé en #emph[DaemonSet] : un agent par nœud, qui voit tous les conteneurs du nœud.
+
+== Installation
+
+- Chart Helm officiel #cmd[falcosecurity/falco] 9.2.2 (Falco 0.45.2).
+- #cmd[driver.kind=modern_ebpf] : sonde eBPF CO-RE, sans module noyau à compiler ; possible car le noyau WSL 2 (6.6) expose ses types BTF (#cmd[/sys/kernel/btf/vmlinux]).
+
+```bash
+helm repo add falcosecurity https://falcosecurity.github.io/charts
+helm install falco falcosecurity/falco --version 9.2.2 -n falco --create-namespace \
+  --set driver.kind=modern_ebpf --set tty=true
+```
+
+#shot("17-falco-install.png",
+  [Falco déployé ; l'agent démarre sur l'unique nœud],
+)
+
+#demo-page(1)
+
+= Démo 1 : shell interactif dans un conteneur
+
+- Scénario du sujet : quelqu'un ouvre un shell interactif dans un conteneur de production.
+- Cible : l'image naïve (#cmd[root], avec #cmd[bash]), lancée dans un namespace #cmd[legacy] sans politique de sécurité, comme une application qui n'aurait pas été durcie.
+
+#shot("18-attack-legacy.png",
+  [Côté attaquant : shell en #cmd[root], lecture de #cmd[/etc/shadow]],
+)
+
+#shot("19-falco-legacy.png",
+  [Côté Falco : deux alertes à 6 ms d'intervalle, avec le pod, le namespace, l'image et la commande exacte],
+)
+
+#deflist(
+  [Notice], [#emph[A shell was spawned in a container with an attached terminal] : #cmd[bash] lancé par #cmd[containerd-shim] (un #cmd[kubectl exec]) avec un terminal],
+  [Warning], [#emph[Sensitive file opened for reading by non-trusted program] : #cmd[head] ouvre #cmd[/etc/shadow]],
+)
+
+#demo-page(2)
+
+= Démo 2 : le même attaquant face au pod durci
+
+== Plus de shell à ouvrir
+
+- Le même #cmd[kubectl exec … sh] échoue : l'image #emph[distroless] n'a pas de shell.
+- Un attaquant qui dispose des droits #cmd[pods/ephemeralcontainers] apporte le sien : #cmd[kubectl debug] ajoute au pod un conteneur éphémère #cmd[busybox] qui partage l'espace de processus de l'application (#cmd[--target]).
+- La politique #emph[restricted] du namespace s'applique aussi à ce conteneur : il doit tourner en non-root (#cmd[--profile=restricted] et #cmd[runAsUser: 65532]).
+
+#shot("20-attack-hardened.png",
+  [#cmd[exec] refusé ; le conteneur de debug voit le processus de l'application (PID 1) et lit son environnement : les deux secrets y sont],
+)
+
+- L'attaquant n'affiche ici que les noms des variables, mais les valeurs sont lisibles : une variable d'environnement injectée depuis un Secret est visible par tout processus du même utilisateur dans le même espace de processus.
+
+#shot("21-falco-hardened.png",
+  [Falco détecte le shell (image #cmd[busybox], pod #cmd[notes]) mais rien sur la lecture de #cmd[/proc/1/environ] : aucune règle par défaut ne la couvre],
+)
+
+== Règle personnalisée
+
+- Nouvelle règle : toute ouverture en lecture de #cmd[/proc/<pid>/environ] d'un autre processus, dans un conteneur, est une tentative de vol de secrets (MITRE ATT&CK T1552, #emph[Unsecured Credentials]).
+- Chargée par Helm (#cmd[customRules]) à côté des règles par défaut.
+
+```yaml
+- rule: Read process environment in container
+  desc: A process opens another process's environment (/proc/<pid>/environ) ...
+  condition: >
+    open_read and container
+    and fd.name glob "/proc/*/environ"
+    and not fd.name = "/proc/self/environ"
+  output: >
+    Process environment read in container, possible secret theft
+    (file=%fd.name process=%proc.name command=%proc.cmdline user_uid=%user.uid
+    container=%container.name image=%container.image.repository:%container.image.tag
+    k8s_pod=%k8s.pod.name k8s_ns=%k8s.ns.name)
+  priority: WARNING
+  tags: [container, credential_access, mitre_credential_access, T1552]
+```
+
+```bash
+helm upgrade falco falcosecurity/falco -n falco --reuse-values -f k8s/falco/custom-rules.yaml
+```
+
+#shot("22-falco-rules-loaded.png",
+  [La règle est chargée et validée],
+)
+
+#shot("23-attack-hardened-2.png",
+  [L'attaque est rejouée],
+)
+
+#shot("24-falco-hardened-2.png",
+  [Deux alertes : le shell (#emph[Notice]) et le vol d'environnement (#emph[Warning]), 3 ms plus tard],
+)
+
+#success-box([
+  - Un shell interactif dans un conteneur déclenche une alerte en temps réel, avec le pod, l'image, l'utilisateur et la commande.
+  - La règle ajoutée couvre l'étape suivante de l'attaque : la lecture des secrets en mémoire.
+])
+
+#info-box([Réduire encore l'exposition des secrets], [
+  - Restreindre par RBAC les verbes #cmd[pods/exec] et #cmd[pods/ephemeralcontainers] en production : sans eux, ni #cmd[exec] ni #cmd[debug].
+  - Monter les secrets en fichiers (#cmd[secret] volume, #cmd[defaultMode: 0400]) plutôt qu'en variables : ils n'apparaissent plus dans #cmd[/proc/<pid>/environ] ni dans les dumps de crash.
+  - Router les alertes Falco vers une plateforme d'alerte (Falcosidekick → Slack, SIEM) plutôt que les lire dans les journaux du pod.
+])
+
+// ═══════════════════════════════════════════
+//  CONCLUSION
+// ═══════════════════════════════════════════
+= Conclusion
+
+== Bilan
+
+#htable(
+  columns: (auto, auto, auto),
+  header: ([Mesure], [Avant], [Après]),
+  [Vulnérabilités de l'image (Trivy)], [2 786 (16 #emph[Critical], 491 #emph[High])], [0],
+  [Taille], [1,68 Go], [135 Mo],
+  [Utilisateur], [#cmd[root]], [#cmd[65532]],
+  [Shell dans l'image], [#cmd[bash], #cmd[sh]], [aucun],
+  [Secrets], [variables passées à la main], [Kubernetes Secret, jamais dans Git ni l'image],
+  [Pod], [aucune contrainte], [non-root, lecture seule, sans capacité, profil #emph[restricted] imposé],
+  [Shell dans un conteneur], [invisible], [alerte Falco],
+  [Lecture des secrets en mémoire], [invisible], [alerte Falco (règle ajoutée)],
+)
+
+== Défense en profondeur
+
+#deflist(
+  [Prévenir], [image minimale (rien à exploiter), non-root, politique #emph[restricted] (l'API refuse les pods dangereux)],
+  [Limiter], [secrets hors du code et de l'image, lecture seule, pas de jeton d'API],
+  [Détecter], [Falco signale ce qui passe malgré tout : shell, lecture de fichiers sensibles, vol de secrets],
+  [Automatiser], [la porte Trivy du pipeline empêche l'image de régresser],
+)
+
+== Limites et pistes
+
+- Python 3.15 imposé par l'image Chainguard gratuite (seule l'étiquette #cmd[latest] est publique) : une version figée de Python demanderait l'offre payante, ou #cmd[python:3.12-slim] avec ses 48 #emph[High] restantes.
+- Secrets Kubernetes encodés, non chiffrés : chiffrement d'etcd et RBAC indispensables ; Vault ou External Secrets en production.
+- Falco ne bloque pas, il alerte : la réponse (isoler le pod, révoquer les accès) reste à automatiser (Falco Talon, Falcosidekick).
+- La règle personnalisée doit être ajustée sur un vrai cluster : des outils légitimes (agents de supervision) lisent aussi #cmd[/proc/\*/environ] et seraient à exclure.
+
+#info-box([Dépôt], [
+  - GitHub : #link("https://github.com/KacemMathlouthi/batch-tp-devsecops")[github.com/KacemMathlouthi/batch-tp-devsecops]
+  - #cmd[app/Dockerfile] (image durcie), #cmd[k8s/] (namespace, déploiement, règle Falco, profil de debug)
+])
