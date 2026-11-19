@@ -41,6 +41,10 @@ def test_hello(client):
     assert "Bonjour Kacem" in client.get("/hello", params={"name": "Kacem"}).text
 
 
+def test_notes_by_owner(client):
+    assert "Bienvenue" in client.get("/notes/by-owner", params={"owner": "admin"}).text
+
+
 # ── Regression tests for the TP1 fixes ──────────────────────
 
 
