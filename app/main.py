@@ -9,6 +9,7 @@ import socket
 import sqlite3
 # subprocess is only ever called with an argv list, never with shell=True
 import subprocess  # nosec B404
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import yaml
@@ -25,7 +26,6 @@ SECRET_KEY = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")
 PING_BIN = shutil.which("ping")  # absolute path, resolved once
 
-app = FastAPI(title="tp-devsecops")
 templates = Environment(
     loader=FileSystemLoader(Path(__file__).parent / "templates"),
     autoescape=select_autoescape(["html"]),
@@ -50,7 +50,6 @@ def verify_password(password: str, stored: str) -> bool:
     return hmac.compare_digest(hash_password(password, bytes.fromhex(salt)), stored)
 
 
-@app.on_event("startup")
 def init_db() -> None:
     with db() as conn:
         conn.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT)")
@@ -61,6 +60,15 @@ def init_db() -> None:
             )
         conn.execute("INSERT OR IGNORE INTO notes (id, owner, title, body) VALUES (1, 'admin', 'Bienvenue', 'Premiere note')")
         conn.execute("INSERT OR IGNORE INTO notes (id, owner, title, body) VALUES (2, 'admin', 'Prive', 'Code coffre: 4242')")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(title="tp-devsecops", lifespan=lifespan)
 
 
 @app.get("/", response_class=HTMLResponse)

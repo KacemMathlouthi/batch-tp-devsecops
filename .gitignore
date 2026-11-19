@@ -5,3 +5,4 @@ __pycache__/
 !tp*/compte-rendu/*.pdf
 reports/tmp/
 app/data/
+app/poetry.lock
