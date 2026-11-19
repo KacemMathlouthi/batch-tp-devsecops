@@ -1,0 +1,30 @@
+{
+  "dependencyCount": 18,
+  "displayTargetFile": "pyproject.toml",
+  "filesystemPolicy": false,
+  "filtered": {
+    "ignore": [],
+    "patch": []
+  },
+  "hasUnknownVersions": false,
+  "ignoreSettings": {
+    "adminOnly": false,
+    "autoApproveIgnores": false,
+    "disregardFilesystemIgnores": false,
+    "reasonRequired": false
+  },
+  "isPrivate": true,
+  "licensesPolicy": {
+    "orgLicenseRules": null,
+    "severities": null
+  },
+  "ok": true,
+  "packageManager": "poetry",
+  "path": "/project",
+  "policy": "",
+  "projectName": "tp-devsecops",
+  "summary": "No known vulnerabilities",
+  "targetFile": "pyproject.toml",
+  "uniqueCount": 0,
+  "vulnerabilities": []
+}

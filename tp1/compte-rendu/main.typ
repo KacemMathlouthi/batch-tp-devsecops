@@ -24,7 +24,7 @@
 
 #deflist(
   [SAST], [Bandit, image officielle #cmd[ghcr.io/pycqa/bandit/bandit], lancé via Docker],
-  [SCA],  [OWASP Dependency-Check, image #cmd[owasp/dependency-check], lancé via Docker],
+  [SCA],  [Snyk CLI, image officielle #cmd[snyk/snyk:python-3.12], lancé via Docker],
   [Preuve], [scan avant / après, exploitation réelle avant / après, tests de non-régression],
 )
 
@@ -62,7 +62,7 @@
 tp-devsecops/
 ├── app/                  # code, tests, Dockerfile, pyproject.toml, uv.lock
 ├── tp1/
-│   ├── reports/          # rapports Bandit et Dependency-Check (HTML, JSON)
+│   ├── reports/          # rapports Bandit et Snyk (HTML, JSON)
 │   └── compte-rendu/     # ce rapport
 ├── tp2/  tp3/            # TP suivants
 └── docs/                 # gabarit Typst partagé, polices
@@ -267,4 +267,172 @@ def test_search_sql_injection_is_inert(client):
   - 11 alertes Bandit → 0, dont les 4 #emph[High].
   - Les quatre exploitations de l'étape 1 échouent sur l'image #cmd[v2].
   - Fonctionnalités intactes : les 5 tests fonctionnels passent toujours.
+])
+
+// ═══════════════════════════════════════════
+//  ÉTAPE 3, SCA
+// ═══════════════════════════════════════════
+= Étape 3 : analyse des dépendances (SCA)
+
+== Pourquoi la SCA
+
+- Le code écrit par l'équipe ne représente qu'une petite partie de ce qui s'exécute : l'image #cmd[v2] embarque 20 paquets Python tiers.
+- Bandit n'analyse que notre code ; une faille dans Starlette ou Jinja2 lui est invisible.
+- La SCA inventorie l'arbre de dépendances complet (directes et transitives) et le confronte à une base de vulnérabilités connues.
+
+== Choix de l'outil
+
+#deflist(
+  [OWASP Dependency-Check], [rapproche chaque paquet d'un identifiant CPE dans la NVD ; analyseur Python marqué expérimental, base locale de plusieurs Go à télécharger, clé d'API NVD obligatoire],
+  [Snyk (retenu)], [base de vulnérabilités propre, indexée par nom et version de paquet ; lit directement un projet #cmd[uv] (#cmd[pyproject.toml] + #cmd[uv.lock]) ; indique pour chaque faille la version qui la corrige],
+)
+
+- Authentification par jeton (compte gratuit), passé au conteneur via #cmd[--env-file] : il n'apparaît ni dans la commande, ni dans l'historique du shell, ni dans les captures.
+- #cmd[-t] alloue un terminal au conteneur : sortie en couleurs, comme en usage interactif.
+
+```bash
+docker run --rm -t --env-file ~/.snyk.env -v "$PWD/app":/project -w /project \
+  snyk/snyk:python-3.12 snyk test
+```
+
+#info-box([Fichier #cmd[poetry.lock]], [
+  - Snyk convertit le projet #cmd[uv] au format Poetry avant de résoudre l'arbre : il écrit un #cmd[poetry.lock] dans le dossier analysé (un montage en lecture seule échoue).
+  - Ce fichier est un artefact du scanner : ignoré par Git et par Docker.
+])
+
+== Résultat initial
+
+#shot("14-snyk-before.png",
+  [20 dépendances testées : 36 vulnérabilités, 38 chemins vulnérables],
+)
+
+#shot("17-snyk-before-summary.png",
+  [Bilan : 16 #emph[High], 20 #emph[Medium], aucune #emph[Critical]],
+  width: 55%,
+)
+
+#htable(
+  columns: (auto, auto, auto, auto, 1fr),
+  header: ([Paquet], [Version], [Type], [Failles], [Exemples]),
+  [#cmd[starlette]], [0.35.1], [transitive], [5 H, 3 M], [ReDoS, SSRF, épuisement de ressources, #emph[request smuggling]],
+  [#cmd[python-multipart]], [0.0.6], [directe], [4 H, 5 M], [#emph[directory traversal], ReDoS, #emph[request smuggling]],
+  [#cmd[urllib3]], [1.26.20], [transitive], [6 H, 1 M], [validation de certificat, décompression non bornée],
+  [#cmd[jinja2]], [3.1.2], [directe], [5 M], [XSS, injection de template, évasion du #emph[sandbox]],
+  [#cmd[requests]], [2.25.1], [directe], [4 M], [fuite d'en-têtes #cmd[Proxy-Authorization], fichier temporaire non sûr],
+  [#cmd[fastapi]], [0.109.0], [directe], [1 H], [ReDoS sur l'analyse du #cmd[Content-Type]],
+  [#cmd[idna]], [2.10], [transitive], [2 M], [ReDoS, épuisement de ressources],
+)
+
+== Correctifs proposés par Snyk
+
+- Snyk sépare deux cas : les paquets que l'on déclare (#emph[upgrade]) et ceux qui arrivent par transitivité (#emph[pin]).
+
+#shot("15-snyk-before-fixes.png",
+  [Dépendances directes : version minimale qui corrige chaque faille],
+)
+
+#shot("16-snyk-before-transitive.png",
+  [Dépendances transitives : #cmd[idna] et #cmd[starlette], tirés par #cmd[fastapi]],
+)
+
+== Mises à jour
+
+#htable(
+  columns: (auto, auto, auto, 1fr),
+  header: ([Paquet], [Avant], [Après], [Action]),
+  [#cmd[fastapi]], [0.109.0], [0.165.0], [mise à jour ; entraîne #cmd[starlette] 0.35.1 → 1.10.0],
+  [#cmd[jinja2]], [3.1.2], [3.1.6], [mise à jour corrective (même branche 3.1)],
+  [#cmd[python-multipart]], [0.0.6], [0.0.34], [mise à jour],
+  [#cmd[idna]], [2.10], [3.20], [transitive : #cmd[uv lock --upgrade-package idna]],
+  [#cmd[requests]], [2.25.1], [—], [supprimée : jamais importée ; retire aussi #cmd[urllib3] et #cmd[chardet]],
+)
+
+#shot("18-deps-diff.png",
+  [Le changement dans #cmd[pyproject.toml] ; le #cmd[uv.lock] est régénéré par #cmd[uv lock]],
+)
+
+=== Pourquoi ces mises à jour sont nécessaires
+
+- *#cmd[python-multipart] et #cmd[starlette]* : ils analysent chaque requête HTTP entrante, avant même notre code. Une requête #cmd[multipart] forgée suffit à bloquer un worker (ReDoS, itérations excessives) ou à contourner un proxy (#emph[request smuggling]) : l'API entière est exposée, pas une seule route.
+- *#cmd[jinja2]* : il génère toutes nos pages HTML. Les failles corrigées en 3.1.3 à 3.1.6 permettent du XSS via le filtre #cmd[xmlattr] et l'évasion du #emph[sandbox], exactement la classe de faille corrigée dans notre code à l'étape 2 : un template sûr ne suffit pas si le moteur ne l'est pas.
+- *#cmd[requests] / #cmd[urllib3]* : non utilisés, mais présents dans l'image et donc exploitables par tout code qui les importerait. La meilleure mise à jour d'une dépendance inutile est sa suppression : moins de paquets, moins de surface d'attaque, moins de mises à jour futures.
+- *#cmd[idna]* : dépendance transitive. #cmd[uv] conserve une version déjà verrouillée tant qu'elle satisfait les contraintes ; elle doit être mise à jour explicitement dans le lockfile.
+
+#info-box([Mise à jour et compatibilité], [
+  - Starlette 1.x déprécie #cmd[\@app.on_event("startup")] : l'initialisation de la base passe par un gestionnaire #cmd[lifespan].
+  - Les 10 tests passent sans autre modification : c'est leur rôle de valider qu'une montée de version ne casse rien.
+])
+
+== Résultat après mise à jour
+
+#shot("19-snyk-after.png",
+  [18 dépendances, 0 vulnérabilité],
+)
+
+- Le #cmd[poetry.lock] laissé par un scan précédent est supprimé avant de relancer : sinon Snyk le réutilise et analyse les anciennes versions.
+- Les lignes #emph[Error: The current project could not be installed] viennent de Poetry, utilisé en interne par Snyk : il ne peut pas installer le projet lui-même comme paquet, ce qui n'est pas nécessaire pour lister ses dépendances. Le scan se termine normalement.
+
+#shot("20-docker-run-v3.png",
+  [Image #cmd[v3] : l'application répond, avec les nouvelles versions ; #cmd[requests] et #cmd[urllib3] ont disparu],
+)
+
+#shot("21-pytest-final.png",
+  [Les 10 tests passent sur les nouvelles versions],
+)
+
+#success-box([
+  - 36 vulnérabilités (16 #emph[High]) → 0.
+  - 20 dépendances → 18 : la plus sûre des dépendances est celle qu'on n'installe pas.
+  - Aucune régression fonctionnelle.
+])
+
+// ═══════════════════════════════════════════
+//  DÉMONSTRATION
+// ═══════════════════════════════════════════
+= Démonstration : avant / après
+
+== Déroulé
+
++ Lancer l'image #cmd[v1] et rejouer les attaques : fuite de la table #cmd[users], #cmd[id] exécuté en #cmd[root], script renvoyé tel quel.
++ Scanner le code #cmd[v1] avec Bandit (11 alertes) et ses dépendances avec Snyk (36 vulnérabilités).
++ Présenter les deux commits de correction : #cmd[fix(app)] pour le code, #cmd[fix(deps)] pour les dépendances.
++ Relancer les deux scanners : plus aucune alerte.
++ Rejouer les attaques contre l'image #cmd[v3] : toutes échouent, l'application fonctionne.
+
+== Bilan chiffré
+
+#htable(
+  columns: (1fr, auto, auto),
+  header: ([Indicateur], [Avant (#cmd[v1])], [Après (#cmd[v3])]),
+  [Alertes Bandit (#emph[High] / total)], [4 / 11], [0 / 0],
+  [Vulnérabilités Snyk (#emph[High] / total)], [16 / 36], [0 / 0],
+  [Dépendances installées], [20], [18],
+  [Attaques réussies], [4 / 4], [0 / 4],
+  [Tests], [5], [10 (dont 5 de sécurité)],
+)
+
+// ═══════════════════════════════════════════
+//  CONCLUSION
+// ═══════════════════════════════════════════
+= Conclusion
+
+== Ce que montre le TP
+
+#deflist(
+  [SAST], [Bandit repère en quelques secondes les motifs dangereux du code (SQL dynamique, #cmd[shell=True], #cmd[yaml.load], MD5) ; chaque alerte pointe une ligne et une CWE],
+  [SCA], [Snyk révèle que l'essentiel du risque vient de code que l'équipe n'a pas écrit : 36 vulnérabilités contre 11 alertes dans notre code],
+  [Correction], [paramétrer, valider, échapper, ne jamais passer par un shell ; mettre à jour ou supprimer les dépendances],
+  [Preuve], [scanner de nouveau et rejouer l'exploitation ; les tests de non-régression figent la correction],
+)
+
+== Limites
+
+- Bandit raisonne par motifs : le XSS de #cmd[/hello] lui a échappé. Un outil à analyse de flux (Semgrep, SonarQube) complèterait l'analyse.
+- Les #cmd[\# nosec] sont une décision humaine : ils doivent rester rares, ciblés sur une règle et justifiés.
+- Un scan SCA n'est valable qu'à sa date : de nouvelles CVE paraissent chaque semaine sur des versions jugées saines aujourd'hui.
+- D'où le TP2 : exécuter ces scans automatiquement à chaque modification et bloquer le pipeline en cas de faille critique ou haute.
+
+#info-box([Dépôt], [
+  - GitHub : #link("https://github.com/KacemMathlouthi/batch-tp-devsecops")[github.com/KacemMathlouthi/batch-tp-devsecops]
+  - Rapports bruts : #cmd[tp1/reports/] (Bandit HTML / JSON, Snyk JSON, avant et après)
 ])
