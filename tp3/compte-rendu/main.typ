@@ -191,3 +191,122 @@ ENTRYPOINT ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port"
   - Taille divisée par 12, exécution non-root, aucun shell dans l'image.
   - Mêmes fonctionnalités, mêmes tests.
 ])
+
+== Dans le pipeline
+
+- Le Dockerfile durci remplace l'ancien : c'est désormais lui que le pipeline du TP2 construit, attaque (DAST) et publie.
+- Nouveau job #cmd[image scan (trivy)] : il échoue sur toute mauvaise configuration ou vulnérabilité #emph[High] / #emph[Critical], et #cmd[publish] en dépend. L'image ne peut plus régresser sans bloquer la livraison.
+
+```yaml
+      - name: image vulnerabilities (fails on High or Critical)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.76.2 \
+            image --exit-code 1 --severity HIGH,CRITICAL tp-devsecops:${{ github.sha }}
+```
+
+#shot("15-ci-trivy-gate.png",
+  [La porte Trivy dans GitHub Actions : 30 paquets Wolfi analysés, 0 vulnérabilité],
+)
+
+// ═══════════════════════════════════════════
+//  ÉTAPE 2, SECRETS
+// ═══════════════════════════════════════════
+= Étape 2 : gestion des secrets
+
+== Situation
+
+- Au TP1, #cmd[SECRET_KEY] et #cmd[ADMIN_PASSWORD] étaient écrits dans le code (Bandit B105) ; ils ont été remplacés par des variables d'environnement.
+- Il reste à les fournir sans les écrire nulle part : ni dans Git, ni dans l'image, ni dans un manifeste versionné.
+
+#htable(
+  columns: (auto, auto, 1fr),
+  header: ([Où], [Secret présent ?], [Vérification]),
+  [Code], [non], [Bandit : aucune alerte B105],
+  [Image], [non], [Trivy : colonne #emph[Secrets] vide ; seules les variables non sensibles sont dans #cmd[ENV]],
+  [Git], [non], [aucun manifeste #cmd[Secret] versionné],
+  [Cluster], [oui], [objet #cmd[Secret] du namespace #cmd[notes]],
+)
+
+== Cluster et namespace
+
+- minikube, profil dédié #cmd[devsecops] (driver Docker sous WSL 2), Kubernetes v1.34 ; l'image durcie y est chargée par #cmd[minikube image load].
+- Namespace #cmd[notes] avec le label #cmd[pod-security.kubernetes.io/enforce: restricted] : l'API refuse tout pod qui ne respecte pas le profil #emph[restricted] des Pod Security Standards.
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: notes
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+```
+
+== Création du Secret
+
+- Valeurs aléatoires générées au moment de la création (#cmd[openssl rand]) : personne ne les a choisies, aucune n'apparaît à l'écran ni dans l'historique.
+- #cmd[kubectl describe] n'affiche que la taille des valeurs.
+
+#shot("10-secret-create.png",
+  [Secret #cmd[notes-secrets] : 2 clés, valeurs jamais affichées],
+)
+
+== Injection dans le pod
+
+- #cmd[valueFrom.secretKeyRef] : Kubernetes lit le Secret au démarrage du conteneur et le transmet comme variable d'environnement ; le manifeste ne contient que le #emph[nom] du Secret.
+
+```yaml
+          env:
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: notes-secrets
+                  key: admin-password
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: notes-secrets
+                  key: secret-key
+```
+
+- Le déploiement complète l'image durcie par un #cmd[securityContext] strict :
+
+#deflist(
+  [#cmd[runAsNonRoot], #cmd[runAsUser: 65532]], [refus de démarrer si l'image tentait de tourner en #cmd[root]],
+  [#cmd[readOnlyRootFilesystem]], [système de fichiers en lecture seule ; seul #cmd[/app/data] (volume #cmd[emptyDir]) est inscriptible],
+  [#cmd[allowPrivilegeEscalation: false]], [aucun gain de privilèges (#cmd[setuid]) possible],
+  [#cmd[capabilities.drop: [ALL]]], [aucune capacité noyau],
+  [#cmd[seccompProfile: RuntimeDefault]], [appels système filtrés par le profil par défaut],
+  [#cmd[automountServiceAccountToken: false]], [pas de jeton d'API Kubernetes dans le pod : une compromission de l'app ne donne pas accès au cluster],
+)
+
+#shot("11-deploy.png",
+  [Déploiement accepté par la politique #emph[restricted] : le pod démarre],
+)
+
+#shot("12-pod-env.png",
+  [Les variables viennent du Secret (Kubernetes n'en affiche que la référence) ; #cmd[securityContext] effectif du conteneur],
+)
+
+== Démonstration
+
+- L'application vérifie le mot de passe administrateur au #cmd[/login] : elle ne peut l'accepter que si elle a bien reçu la valeur du Secret.
+
+#shot("13-login-secret.png",
+  [Le mot de passe lu dans le Secret ouvre la session ; l'ancien mot de passe codé en dur au TP1 (#cmd[admin123]) est refusé],
+)
+
+#shot("14-psa-reject.png",
+  [La politique #emph[restricted] en action : un pod #cmd[root] sans #cmd[securityContext] est refusé par l'API],
+)
+
+#warn-box([
+  - Un Secret Kubernetes est encodé en base64, pas chiffré : quiconque peut lire les Secrets du namespace peut les décoder (comme dans la démonstration).
+  - La protection repose sur le RBAC (qui peut lire #cmd[secrets]) et sur le chiffrement au repos d'etcd (#cmd[EncryptionConfiguration]).
+  - Pour aller plus loin : Vault ou External Secrets Operator (secret stocké hors du cluster, rotation automatique), Sealed Secrets (secret chiffré versionnable dans Git).
+])
+
+#success-box([
+  - Aucun secret dans le code, l'image, Git ni l'écran.
+  - L'application lit ses secrets au démarrage et fonctionne avec eux.
+  - Pod non-root, en lecture seule, sans capacité ni jeton d'API ; la politique du namespace rend ces règles obligatoires.
+])
