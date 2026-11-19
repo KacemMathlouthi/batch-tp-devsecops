@@ -7,7 +7,7 @@
   short-title: "SAST et SCA",
   title: [Analyse statique (SAST) et sécurité des dépendances (SCA)],
   subtitle: [Trouver les failles dans le code et dans ses dépendances avant le déploiement, les corriger, puis prouver par un nouveau scan qu'elles ont disparu.],
-  image-ref: "tp-devsecops:v1 → v2",
+  image-ref: "tp-devsecops:v1 → v3",
 )
 
 // ═══════════════════════════════════════════
