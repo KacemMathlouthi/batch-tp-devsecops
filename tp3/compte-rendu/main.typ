@@ -222,9 +222,13 @@ ENTRYPOINT ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port"
   columns: (auto, auto, 1fr),
   header: ([Où], [Secret présent ?], [Vérification]),
   [Code], [non], [Bandit : aucune alerte B105],
-  [Image], [non], [Trivy : colonne #emph[Secrets] vide ; seules les variables non sensibles sont dans #cmd[ENV]],
+  [Image], [non], [Trivy #cmd[--scanners secret] : 0 secret détecté ; #cmd[ENV] ne contient que des réglages],
   [Git], [non], [aucun manifeste #cmd[Secret] versionné],
   [Cluster], [oui], [objet #cmd[Secret] du namespace #cmd[notes]],
+)
+
+#shot("16-trivy-secrets.png",
+  [Scan de secrets Trivy sur l'image durcie : 0 trouvé ; aucune variable sensible dans la configuration de l'image],
 )
 
 == Cluster et namespace
